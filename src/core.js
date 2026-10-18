@@ -1,10 +1,11 @@
+import { customerStoreCopy,customerProductCopy } from './copy.js';
 import { DEFAULT_CATALOG, DEFAULT_STORE } from './defaults.js';
 import { SCHEMA } from './schema.js';
 
 export const STATUS={new:'Очікує підтвердження',confirmed:'Підтверджено',paid:'Оплату підтверджено',processing:'Готуємо',shipped:'Відправлено',completed:'Завершено',cancelled:'Скасовано'};
 export const NEXT={new:['confirmed','cancelled'],confirmed:['paid','processing','cancelled'],paid:['processing','shipped','cancelled'],processing:['paid','shipped','cancelled'],shipped:['completed'],completed:[],cancelled:[]};
 export const DELIVERY={branch:'Відділення Нової пошти',locker:'Поштомат Нової пошти'};
-export const PAYMENTS={cod:'Післяплата після погодження',transfer:'Переказ на рахунок після підтвердження'};
+export const PAYMENTS={cod:'Післяплата',transfer:'Переказ на рахунок'};
 export const CONCEPT_PHOTOS={heart:{color:'Чорний',file:'heart-concept-v1.jpg'},lights:{color:'Молочний',file:'lights-concept-v1.jpg'},speed:{color:'Чорний',file:'speed-concept-v1.jpg'},cap:{color:'Чорний',file:'cap-concept-v1.jpg'},sweat:{color:'Молочний',file:'sweat-concept-v1.jpg'},hoodie:{color:'Чорний',file:'hoodie-concept-v1.jpg'},zip:{color:'Графіт',file:'zip-concept-v1.jpg'},pairtee:{color:'Чорний + молочний',file:'pairtee-concept-v1.jpg'},pairsweat:{color:'Чорний + молочний',file:'pairsweat-concept-v1.jpg'}};
 export const PREORDER_NOTICE='Виготовлення під замовлення. Розмір, матеріали, остаточну вартість і строк відправлення погодимо з вами до оплати.';
 export class ShopError extends Error {}
@@ -62,7 +63,7 @@ export class Shop {
  async load(){
   const rows=await this.db.batch([stmt(this.db,"SELECT key,value FROM settings WHERE key IN('store','categories')"),stmt(this.db,'SELECT id,price,active,data FROM products'),stmt(this.db,'SELECT key,file_id,kind FROM assets')]);
   const s=Object.fromEntries((rows[0].results||[]).map(r=>[r.key,JSON.parse(r.value)]));if(!s.store)throw new ShopError('Магазин ще налаштовується. Спробуйте пізніше.');
-  this.store={...s.store,sales_mode:s.store.sales_mode||'preorder',admin_ids:s.store.admin_ids||DEFAULT_STORE.admin_ids||'',seller_name:s.store.seller_name||DEFAULT_STORE.seller_name,seller_details:s.store.seller_details||DEFAULT_STORE.seller_details,support_url:s.store.support_url||DEFAULT_STORE.support_url,dispatch_text:s.store.dispatch_text?.startsWith('Тестова колекція.')?DEFAULT_STORE.dispatch_text:s.store.dispatch_text};this.env={...this.env,ADMIN_IDS:this.secretAdminIds||this.store.admin_ids};this.categories=s.categories;this.products=Object.fromEntries((rows[1].results||[]).map(r=>[r.id,{...JSON.parse(r.data),price_uah:r.price,active:!!r.active}]));this.assets=Object.fromEntries((rows[2].results||[]).map(r=>[r.key,r]));return this;
+  this.store=customerStoreCopy({...s.store,sales_mode:s.store.sales_mode||'preorder',admin_ids:s.store.admin_ids||DEFAULT_STORE.admin_ids||'',seller_name:s.store.seller_name||DEFAULT_STORE.seller_name,seller_details:s.store.seller_details||DEFAULT_STORE.seller_details,support_url:s.store.support_url||DEFAULT_STORE.support_url,dispatch_text:s.store.dispatch_text?.startsWith('Тестова колекція.')?DEFAULT_STORE.dispatch_text:s.store.dispatch_text});this.env={...this.env,ADMIN_IDS:this.secretAdminIds||this.store.admin_ids};this.categories=s.categories;this.products=Object.fromEntries((rows[1].results||[]).map(r=>[r.id,customerProductCopy({...JSON.parse(r.data),price_uah:r.price,active:!!r.active})]));this.assets=Object.fromEntries((rows[2].results||[]).map(r=>[r.key,r]));return this;
  }
  get(pid){const p=this.products[pid];if(!p||!p.active)throw new ShopError('Цей товар зараз недоступний.');return p;}
  variant(pid,color,size,size2=''){
@@ -144,11 +145,13 @@ export async function telegram(env,method,payload){
 }
 export function btn(text,data){if(new TextEncoder().encode(data).length>64)throw new Error('Callback limit');return {text,callback_data:data};}
 export const kb=(...rows)=>({inline_keyboard:rows.filter(r=>r?.length)});
-export const HOME={keyboard:[[{text:'Каталог'},{text:'Кошик'}],[{text:'Мої замовлення'},{text:'Про покупку'}]],resize_keyboard:true,is_persistent:true};
+export const HOME={keyboard:[[{text:'Показати все'},{text:'Каталог'}],[{text:'Кошик'},{text:'Мої замовлення'}],[{text:'Допомога'}]],resize_keyboard:true,is_persistent:true};
 export async function send(env,uid,text,markup=kb([btn('Головне меню','home')])){
  if(text.length>4000)throw new ShopError('Повідомлення завелике. Скоротіть текст у налаштуваннях.');
  return telegram(env,'sendMessage',{chat_id:uid,text,parse_mode:'HTML',reply_markup:markup,link_preview_options:{is_disabled:true}});
 }
-export async function media(env,uid,asset,caption){
- if(!asset)return;try{if(asset.kind==='document')await telegram(env,'sendDocument',{chat_id:uid,document:asset.file_id,caption});else await telegram(env,'sendPhoto',{chat_id:uid,photo:asset.file_id||asset,caption});}catch(error){if(error.code===403)throw error;}
+export async function media(env,uid,asset,caption,markup){
+ if(!asset)return false;
+ const payload={chat_id:uid,caption,...(markup?{parse_mode:'HTML',reply_markup:markup}:{})};
+ try{if(asset.kind==='document')await telegram(env,'sendDocument',{...payload,document:asset.file_id});else await telegram(env,'sendPhoto',{...payload,photo:asset.file_id||asset});return true;}catch(error){if(error.code===403)throw error;return false;}
 }

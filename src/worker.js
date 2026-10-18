@@ -28,7 +28,7 @@ export async function setup(request,env,url){
    if(shop.store.mode==='live'&&shop.liveIssues().length)throw new ShopError('Завершіть налаштування live: '+shop.liveIssues().join('; '));
    const endpoint=url.origin+'/telegram/webhook';if(info.url&&info.url!==endpoint&&body.replace!==true)return json({error:'У бота вже є інше webhook-підключення. Якщо потрібно замінити, поставте відповідну позначку.'},409);
    await telegram(env,'setWebhook',{url:endpoint,secret_token:await webhookSecret(env),max_connections:1,allowed_updates:['message','callback_query'],drop_pending_updates:false});
-   await telegram(env,'setMyCommands',{commands:[['start','Вітання та меню'],['catalog','Каталог FORMULOVE'],['cart','Мій кошик'],['orders','Мої замовлення'],['help','Оплата, доставка й допомога'],['cancel','Скасувати оформлення'],['id','Мій Telegram ID']].map(([command,description])=>({command,description}))});
+   await telegram(env,'setMyCommands',{commands:[['start','Вітання та меню'],['catalog','Каталог FORMULOVE'],['all','Усі моделі з фото'],['cart','Мій кошик'],['orders','Мої замовлення'],['help','Допомога'],['cancel','Скасувати оформлення'],['id','Мій Telegram ID']].map(([command,description])=>({command,description}))});
    await run(env.DB,"INSERT INTO settings VALUES('bot_username',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[me.username]);
    return json({ok:true,username:me.username,note:shop.store.mode==='demo'?'Працює demo. Нічого не сплачуйте. Внесіть свій числовий ID з команди /id у поле власника в панелі.':'Підключення збережено. Виконайте контрольне замовлення.'});
   }
