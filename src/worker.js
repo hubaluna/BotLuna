@@ -46,7 +46,7 @@ export async function handleWebhook(request,env){
  const claim=await first(env.DB,"INSERT INTO updates(id,state,lock_until,created_at) VALUES(?,'processing',?,?) ON CONFLICT(id) DO UPDATE SET state='processing',lock_until=excluded.lock_until WHERE updates.state!='done' AND updates.lock_until<? RETURNING id",[update.update_id,now+120,now,now]);
  if(!claim){const old=await first(env.DB,'SELECT state FROM updates WHERE id=?',[update.update_id]);return old?.state==='done'?json({ok:true,duplicate:true}):json({error:'Update processing'},503);}
  try{
-  const shop=await new Shop(env).load();const uid=update.callback_query?.from?.id??update.message?.from?.id;
+  const shop=await new Shop({...env,PUBLIC_BASE_URL:new URL(request.url).origin}).load();const uid=update.callback_query?.from?.id??update.message?.from?.id;
   if(Number.isSafeInteger(uid)&&uid>0){const bot=new Bot(shop,uid,update.update_id);try{await bot.handle(update)}catch(error){if(error instanceof ShopError||/STOCK_CHANGED|CART_LIMIT|PRICE_CHANGED|CART_CHANGED|CONFIG_CHANGED/.test(String(error?.message))){await bot.send(publicError(error));}else throw error;}}
   await run(env.DB,"UPDATE updates SET state='done',lock_until=0 WHERE id=?",[update.update_id]);
   // Best-effort immediate delivery; every order already has a durable outbox row.
