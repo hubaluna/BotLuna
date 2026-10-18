@@ -14,6 +14,19 @@
     "build": "node build.mjs"
   },
   "devDependencies": {
-    "wrangler": "^4.68.0"
+    "wrangler": "4.151.1"
+  },
+  "cloudflare": {
+    "bindings": {
+      "BOT_TOKEN": {
+        "description": "Токен бота від BotFather. Вводьте лише тут у Cloudflare, не у файлах GitHub."
+      },
+      "SETUP_KEY": {
+        "description": "Створіть окремий випадковий пароль панелі власника від 32 символів і збережіть у менеджері паролів."
+      },
+      "DB": {
+        "description": "Постійна база каталогу й замовлень FORMULOVE. Для нового тесту можна створити нову; для чинних продажів використайте наявну."
+      }
+    }
   }
 }
