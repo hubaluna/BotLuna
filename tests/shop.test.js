@@ -48,3 +48,37 @@ test('signed Telegram update is deduplicated and stays below free D1 query limit
 test('notification errors retain durable outbox',async()=>{await place();globalThis.fetch=async()=>Response.json({ok:false,error_code:429,parameters:{retry_after:10}},{status:429});await drain(shop);const pending=await all(db,"SELECT * FROM outbox WHERE state='pending'");assert.equal(pending.length,2);assert(pending.every(r=>r.attempts===1));});
 test('receipt escapes buyer content',async()=>{await add();const q=await shop.quote(1);const {order}=await shop.place(1,'safe',{...customer(),comment:'<b>test</b>'},q.fingerprint);assert(receipt(order,true).includes('&lt;b&gt;test&lt;/b&gt;'));});
 test('button callback lengths and message lengths match Telegram limits',async()=>{for(const p of Object.values(shop.products)){await new Bot(shop,1,updateId++).product(p.id);for(const c of p.colors)await new Bot(shop,1,updateId++).sizes(p.id,c.id,p.pair?p.sizes[0]:'');}for(const c of calls){if(c.method!=='sendMessage')continue;assert(c.data.text.length<=4096);for(const row of c.data.reply_markup?.inline_keyboard||[])for(const b of row)if(b.callback_data)assert(Buffer.byteLength(b.callback_data)<=64);}});
+
+
+test('demo tee cards use labelled mockups from the current Worker origin',async()=>{
+ env.PUBLIC_BASE_URL='https://my-store.workers.dev';
+ for(const id of ['heart','lights','speed'])await new Bot(shop,1,updateId++).product(id);
+ const photos=calls.filter(c=>c.method==='sendPhoto');assert.equal(photos.length,3);
+ assert.deepEqual(photos.map(c=>c.data.photo),['heart','lights','speed'].map(id=>'https://my-store.workers.dev/products/'+id+'-concept-v1.jpg'));
+ for(const c of photos)assert.match(c.data.caption,/Візуалізація дизайну, не фото готового виробу/);
+ assert.equal((await first(db,"SELECT data FROM products WHERE id='heart'")).data.includes('concept-v1'),false);
+});
+test('owner Telegram photo overrides both a catalogue URL and a bundled mockup',async()=>{
+ env.PUBLIC_BASE_URL='https://my-store.workers.dev';shop.products.heart.photo='https://owner.example.com/tee.jpg';
+ shop.assets['product:heart']={kind:'photo',file_id:'owner-original-telegram-file'};
+ await new Bot(shop,1,updateId++).product('heart');
+ const photo=calls.find(c=>c.method==='sendPhoto');assert.equal(photo.data.photo,'owner-original-telegram-file');assert(!photo.data.caption.includes('Візуалізація'));
+});
+test('owner catalogue photo is retained and no mockup is used for a missing live photo',async()=>{
+ env.PUBLIC_BASE_URL='https://my-store.workers.dev';shop.products.heart.photo='https://owner.example.com/tee.jpg';
+ await new Bot(shop,1,updateId++).product('heart');assert.equal(calls.find(c=>c.method==='sendPhoto').data.photo,'https://owner.example.com/tee.jpg');
+ calls.length=0;shop.store.mode='live';shop.products.heart.photo='';
+ await new Bot(shop,1,updateId++).product('heart');assert.equal(calls.filter(c=>c.method==='sendPhoto').length,0);
+});
+test('signed product webhook derives image URL from request instead of an account-specific constant',async()=>{
+ const update={update_id:9001,callback_query:{id:'photo',from:{id:1},data:'product:lights',message:{chat:{id:1,type:'private'}}}};
+ const request=new Request('https://another-store.workers.dev/telegram/webhook',{method:'POST',headers:{'X-Telegram-Bot-Api-Secret-Token':await webhookSecret(env),'Content-Type':'application/json'},body:JSON.stringify(update)});
+ const r=await worker.fetch(request,env);assert.equal(r.status,200);
+ assert.equal(calls.find(c=>c.method==='sendPhoto').data.photo,'https://another-store.workers.dev/products/lights-concept-v1.jpg');
+});
+test('a Telegram photo fetch failure still leaves a usable product card',async()=>{
+ env.PUBLIC_BASE_URL='https://my-store.workers.dev';const fetchOk=globalThis.fetch;
+ globalThis.fetch=async(url,options)=>String(url).endsWith('/sendPhoto')?Response.json({ok:false,error_code:400},{status:400}):fetchOk(url,options);
+ await new Bot(shop,1,updateId++).product('heart');
+ assert(calls.some(c=>c.method==='sendMessage'&&c.data.reply_markup.inline_keyboard.flat().some(b=>b.callback_data==='color:heart:black')));
+});
