@@ -50,12 +50,12 @@ test('receipt escapes buyer content',async()=>{await add();const q=await shop.qu
 test('button callback lengths and message lengths match Telegram limits',async()=>{for(const p of Object.values(shop.products)){await new Bot(shop,1,updateId++).product(p.id);for(const c of p.colors)await new Bot(shop,1,updateId++).sizes(p.id,c.id,p.pair?p.sizes[0]:'');}for(const c of calls){if(c.method!=='sendMessage')continue;assert(c.data.text.length<=4096);for(const row of c.data.reply_markup?.inline_keyboard||[])for(const b of row)if(b.callback_data)assert(Buffer.byteLength(b.callback_data)<=64);}});
 
 
-test('demo tee cards use labelled mockups from the current Worker origin',async()=>{
+test('tee cards use clean product captions and keep made-to-order information',async()=>{
  env.PUBLIC_BASE_URL='https://my-store.workers.dev';shop.env.PUBLIC_BASE_URL=env.PUBLIC_BASE_URL;
  for(const id of ['heart','lights','speed'])await new Bot(shop,1,updateId++).product(id);
  const photos=calls.filter(c=>c.method==='sendPhoto');assert.equal(photos.length,3);
  assert.deepEqual(photos.map(c=>c.data.photo),['heart','lights','speed'].map(id=>'https://my-store.workers.dev/products/'+id+'-concept-v1.jpg'));
- for(const c of photos)assert.match(c.data.caption,/Візуалізація дизайну, не фото готового виробу/);
+ for(const c of photos){assert(!c.data.caption.includes('Візуалізація'));assert(c.data.caption.split('\n').length<=2);}assert(calls.some(c=>c.method==='sendMessage'&&c.data.text.includes('Виготовлення під замовлення.')));
  assert.equal((await first(db,"SELECT data FROM products WHERE id='heart'")).data.includes('concept-v1'),false);
 });
 test('owner Telegram photo overrides both a catalogue URL and a bundled mockup',async()=>{
@@ -92,7 +92,7 @@ test('live preorders accept disclosed mockups and absent measurements with a rea
  await current.changeCart(1,key,1,'preorder-live');const q=await current.quote(1);
  const {order}=await current.place(1,'real-preorder',customer(),q.fingerprint);
  assert.equal(order.mode,'live');assert.equal(order.customer.sale_type,'preorder');assert.match(order.customer.preorder_notice,/до оплати/);
- const text=receipt(order,true);assert.match(text,/Передзамовлення/);assert(!text.includes('ТЕСТОВЕ ЗАМОВЛЕННЯ'));
+ const text=receipt(order,true);assert.match(text,/Виготовлення під замовлення/);assert(!text.includes('ТЕСТОВЕ ЗАМОВЛЕННЯ'));
  assert.deepEqual(JSON.parse((await first(db,'SELECT admin_targets FROM orders WHERE id=?',[order.id])).admin_targets),[901]);
 });
 test('ready stock mode still requires real sample photos and measurements',async()=>{
@@ -110,12 +110,22 @@ test('Cloudflare ADMIN_IDS remains authoritative over panel fallback',async()=>{
  await shop.saveConfig({...shop.store,admin_ids:'901'},{currency:'UAH',categories:shop.categories,products:Object.values(shop.products)});
  assert.equal(shop.env.ADMIN_IDS,'900');
 });
-test('preorder mockups cover every active built-in product and always carry a disclosure',async()=>{
+test('every live preorder product keeps a short fulfillment label with clean image captions',async()=>{
  env.PUBLIC_BASE_URL='https://shop.workers.dev';shop.env.PUBLIC_BASE_URL=env.PUBLIC_BASE_URL;shop.store.mode='live';shop.store.sales_mode='preorder';
  for(const p of Object.values(shop.products))await new Bot(shop,1,updateId++).product(p.id);
- const photos=calls.filter(c=>c.method==='sendPhoto');assert.equal(photos.length,9);for(const p of photos)assert.match(p.data.caption,/Візуалізація/);
+ const photos=calls.filter(c=>c.method==='sendPhoto');assert.equal(photos.length,9);for(const p of photos)assert(!p.data.caption.includes('Візуалізація'));assert.equal(calls.filter(c=>c.method==='sendMessage'&&c.data.text.includes('Виготовлення під замовлення.')).length,9);
 });
 test('stored preorder conditions remain visible after later catalogue changes',async()=>{
  const o=await place();shop.store.sales_mode='ready';
- const saved=await shop.order(o.id);assert.equal(saved.customer.sale_type,'preorder');assert.match(receipt(saved),/Зразки, точні заміри/);
+ const saved=await shop.order(o.id);assert.equal(saved.customer.sale_type,'preorder');assert.match(receipt(saved),/строк відправлення/);
+});
+
+
+test('live storefront avoids technical image notices and confirms fulfillment before ordering',async()=>{
+ shop.store.mode='live';shop.store.catalog_confirmed=true;shop.store.terms_confirmed=true;shop.env.PUBLIC_BASE_URL='https://shop.workers.dev';
+ await new Bot(shop,1,updateId++).home();await new Bot(shop,1,updateId++).product('heart');
+ const messages=calls.filter(c=>c.method==='sendMessage').map(c=>c.data.text).join('\n');
+ for(const term of ['Візуалізація','не фото','Демонстраційний','зразок ще не затверджено'])assert(!messages.includes(term));
+ assert(messages.includes('Виготовлення під замовлення.'));assert(!messages.includes('є в наявності'));
+ await add();const order=await place(1,'polished-copy');const text=receipt(order);assert(text.includes('до оплати'));assert(!text.includes('Візуалізація'));
 });
