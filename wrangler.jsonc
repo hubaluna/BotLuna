@@ -15,5 +15,8 @@
     "crons": [
       "*/5 * * * *"
     ]
+  },
+  "assets": {
+    "directory": "./public/"
   }
 }
