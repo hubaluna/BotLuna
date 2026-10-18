@@ -20,7 +20,7 @@ export async function setup(request,env,url){
  try{
   if(action==='init'){await initialize(env.DB);return json({ok:true,note:'Базу підготовлено без видалення чинних даних.'});}
   const shop=await new Shop(env).load();
-  if(action==='state')return json({store:shop.store,catalog:{currency:'UAH',categories:shop.categories,products:Object.values(shop.products)},admin_count:adminIds(env).length,live_issues:shop.liveIssues(),asset_keys:Object.keys(shop.assets)});
+  if(action==='state')return json({store:shop.store,catalog:{currency:'UAH',categories:shop.categories,products:Object.values(shop.products)},admin_count:adminIds(shop.env).length,live_issues:shop.liveIssues(),asset_keys:Object.keys(shop.assets)});
   if(action==='save'){await shop.saveConfig(body.store,body.catalog);return json({ok:true});}
   if(['check','connect'].includes(action)){
    const issues=environmentIssues(env);if(issues.length)throw new ShopError('Заповніть: '+issues.join('; '));const me=await telegram(env,'getMe',{}),info=await telegram(env,'getWebhookInfo',{});
@@ -30,7 +30,7 @@ export async function setup(request,env,url){
    await telegram(env,'setWebhook',{url:endpoint,secret_token:await webhookSecret(env),max_connections:1,allowed_updates:['message','callback_query'],drop_pending_updates:false});
    await telegram(env,'setMyCommands',{commands:[['start','Вітання та меню'],['catalog','Каталог FORMULOVE'],['cart','Мій кошик'],['orders','Мої замовлення'],['help','Оплата, доставка й допомога'],['cancel','Скасувати оформлення'],['id','Мій Telegram ID']].map(([command,description])=>({command,description}))});
    await run(env.DB,"INSERT INTO settings VALUES('bot_username',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[me.username]);
-   return json({ok:true,username:me.username,note:shop.store.mode==='demo'?'Працює demo. Нічого не сплачуйте. Додайте ADMIN_IDS після команди /id.':'Підключення збережено. Виконайте контрольне замовлення.'});
+   return json({ok:true,username:me.username,note:shop.store.mode==='demo'?'Працює demo. Нічого не сплачуйте. Внесіть свій числовий ID з команди /id у поле власника в панелі.':'Підключення збережено. Виконайте контрольне замовлення.'});
   }
   return json({error:'Дію не знайдено.'},404);
  }catch(error){if(error instanceof ShopError)return json({error:error.message},400);if(error?.code!==undefined)return json({error:'Telegram не відповів (код '+error.code+'). Перевірте токен і повторіть запит.'},502);return json({error:'Не вдалося виконати запит. Якщо це перший запуск, спершу натисніть «Підготувати базу».'},500);}
