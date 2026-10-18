@@ -1,0 +1,3 @@
+# Only placeholders. Real values belong in Cloudflare Worker Secrets.
+BOT_TOKEN=""
+SETUP_KEY=""
