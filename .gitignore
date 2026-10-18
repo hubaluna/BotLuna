@@ -4,3 +4,4 @@
 node_modules/
 .wrangler/
 *.sqlite*
+public/products/*.jpg
