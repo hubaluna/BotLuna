@@ -1,5 +1,11 @@
 import { ShopError,STATUS,NEXT,DELIVERY,PAYMENTS,HOME,esc,money,phone,randomToken,adminIds,targets,stmt,first,all,run,epoch,stamp,telegram,TelegramError,btn,kb,send,media,publicError } from './core.js';
 
+const CONCEPT_PHOTOS = {
+ heart:{color:'Чорний',file:'heart-concept-v1.jpg'},
+ lights:{color:'Молочний',file:'lights-concept-v1.jpg'},
+ speed:{color:'Чорний',file:'speed-concept-v1.jpg'}
+};
+
 export function receipt(o,details=false){
  const lines=[];if(o.id)lines.push('<b>FORMULOVE · №'+String(o.id).padStart(6,'0')+'</b>');if(o.mode==='demo')lines.push('ТЕСТОВЕ ЗАМОВЛЕННЯ · нічого не сплачуйте');lines.push('Статус: '+STATUS[o.status]);
  for(const i of o.items)lines.push('\n'+esc(i.name)+'\n'+esc(i.label)+' · '+i.quantity+' × '+money(i.unit_price));
@@ -23,7 +29,14 @@ export class Bot {
  async catalog(){const rows=this.shop.categories.filter(c=>Object.values(this.shop.products).some(p=>p.active&&p.category===c.id)).map(c=>[btn(c.name,'cat:'+c.id)]);await this.send('<b>Каталог FORMULOVE</b>\nОберіть категорію. Ціни в гривнях; комплекти — за дві речі.',kb(...rows,[btn('Кошик','cart')]));}
  async category(id){const c=this.shop.categories.find(c=>c.id===id);if(!c)throw new ShopError('Категорію не знайдено.');await this.send('<b>'+esc(c.name)+'</b>',kb(...Object.values(this.shop.products).filter(p=>p.active&&p.category===id).map(p=>[btn(p.name+' · '+money(p.price_uah),'product:'+p.id)]),[btn('Усі категорії','catalog')]));}
  async product(id){
-  const p=this.shop.get(id);await media(this.env,this.uid,this.shop.assets['product:'+id]||(p.photo?{kind:'photo',file_id:p.photo}:null),p.name);
+  const p=this.shop.get(id);
+  let photo=this.shop.assets['product:'+id]||(p.photo?{kind:'photo',file_id:p.photo}:null),caption=p.name;
+  const concept=Object.hasOwn(CONCEPT_PHOTOS,id)?CONCEPT_PHOTOS[id]:null;
+  if(!photo&&this.store.mode==='demo'&&concept&&this.env.PUBLIC_BASE_URL){
+   photo={kind:'photo',file_id:new URL('/products/'+concept.file,this.env.PUBLIC_BASE_URL).href};
+   caption+='\n'+concept.color+' · Візуалізація дизайну, не фото готового виробу.';
+  }
+  await media(this.env,this.uid,photo,caption);
   const text='<b>'+esc(p.name)+'</b>\n<b>'+money(p.price_uah)+'</b>'+(p.pair?' за комплект із 2 речей':'')+'\n\n'+esc(p.description)+'\n\n'+esc(p.materials)+'\n'+esc(p.embroidery)+'\n\n'+esc(this.store.dispatch_text)+(this.store.mode==='demo'?'\n\nПопередні ціна й характеристики; зразок ще не затверджено.':'')+'\n\nОберіть колір:';
   await this.send(text,kb(...p.colors.map(c=>[btn(c.name,'color:'+id+':'+c.id)]),[btn('Розміри та посадка','measure:'+id)],[btn('Назад','cat:'+p.category),btn('Кошик','cart')]));
  }
