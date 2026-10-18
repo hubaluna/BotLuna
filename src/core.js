@@ -6,7 +6,7 @@ export const NEXT={new:['confirmed','cancelled'],confirmed:['paid','processing',
 export const DELIVERY={branch:'Відділення Нової пошти',locker:'Поштомат Нової пошти'};
 export const PAYMENTS={cod:'Післяплата після погодження',transfer:'Переказ на рахунок після підтвердження'};
 export const CONCEPT_PHOTOS={heart:{color:'Чорний',file:'heart-concept-v1.jpg'},lights:{color:'Молочний',file:'lights-concept-v1.jpg'},speed:{color:'Чорний',file:'speed-concept-v1.jpg'},cap:{color:'Чорний',file:'cap-concept-v1.jpg'},sweat:{color:'Молочний',file:'sweat-concept-v1.jpg'},hoodie:{color:'Чорний',file:'hoodie-concept-v1.jpg'},zip:{color:'Графіт',file:'zip-concept-v1.jpg'},pairtee:{color:'Чорний + молочний',file:'pairtee-concept-v1.jpg'},pairsweat:{color:'Чорний + молочний',file:'pairsweat-concept-v1.jpg'}};
-export const PREORDER_NOTICE='Передзамовлення. Зображення є візуалізаціями дизайнів. Зразки, точні заміри, матеріали, остаточну вартість і строк виготовлення менеджер погодить із вами до оплати. Надсилання заявки не списує кошти та не означає, що товар уже є на складі.';
+export const PREORDER_NOTICE='Виготовлення під замовлення. Розмір, матеріали, остаточну вартість і строк відправлення погодимо з вами до оплати.';
 export class ShopError extends Error {}
 export const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export const money=n=>String(n).replace(/\B(?=(\d{3})+(?!\d))/g,' ')+' грн';
