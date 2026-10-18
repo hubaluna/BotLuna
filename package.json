@@ -1,0 +1,19 @@
+{
+  "name": "formulove-cloudflare-bot",
+  "version": "2.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "check": "node --check src/worker.js && node --check src/core.js && node --check src/bot.js",
+    "test": "node tests/shop.test.js",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.68.0"
+  }
+}
