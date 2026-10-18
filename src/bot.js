@@ -1,13 +1,7 @@
-import { ShopError,STATUS,NEXT,DELIVERY,PAYMENTS,HOME,esc,money,phone,randomToken,adminIds,targets,stmt,first,all,run,epoch,stamp,telegram,TelegramError,btn,kb,send,media,publicError } from './core.js';
-
-const CONCEPT_PHOTOS = {
- heart:{color:'Чорний',file:'heart-concept-v1.jpg'},
- lights:{color:'Молочний',file:'lights-concept-v1.jpg'},
- speed:{color:'Чорний',file:'speed-concept-v1.jpg'}
-};
+import { CONCEPT_PHOTOS,PREORDER_NOTICE,ShopError,STATUS,NEXT,DELIVERY,PAYMENTS,HOME,esc,money,phone,randomToken,adminIds,targets,stmt,first,all,run,epoch,stamp,telegram,TelegramError,btn,kb,send,media,publicError } from './core.js';
 
 export function receipt(o,details=false){
- const lines=[];if(o.id)lines.push('<b>FORMULOVE · №'+String(o.id).padStart(6,'0')+'</b>');if(o.mode==='demo')lines.push('ТЕСТОВЕ ЗАМОВЛЕННЯ · нічого не сплачуйте');lines.push('Статус: '+STATUS[o.status]);
+ const lines=[];if(o.customer?.sale_type==='preorder')lines.push('<b>Передзамовлення</b>',esc(o.customer.preorder_notice||PREORDER_NOTICE));if(o.id)lines.push('<b>FORMULOVE · №'+String(o.id).padStart(6,'0')+'</b>');if(o.mode==='demo')lines.push('ТЕСТОВЕ ЗАМОВЛЕННЯ · нічого не сплачуйте');lines.push('Статус: '+STATUS[o.status]);
  for(const i of o.items)lines.push('\n'+esc(i.name)+'\n'+esc(i.label)+' · '+i.quantity+' × '+money(i.unit_price));
  lines.push('\nТовари: '+money(o.goods_total),esc(o.package_name)+': '+money(o.packaging_total),'<b>Разом: '+money(o.total)+'</b>','Доставка та комісія післяплати — окремо.');
  if(details){const c=o.customer;lines.push('\nОдержувач: '+esc(c.name),'Телефон: '+esc(c.phone),'Місто: '+esc(c.city),DELIVERY[c.delivery]+': '+esc(c.branch),'Оплата: '+PAYMENTS[c.payment]);if(c.comment)lines.push('Коментар: '+esc(c.comment));}
@@ -22,7 +16,7 @@ export class Bot {
  support(){const rows=[];if(this.store.support_url)rows.push([{text:'Написати FORMULOVE',url:this.store.support_url}]);rows.push([btn('Про покупку','info'),btn('Каталог','catalog')]);return kb(...rows);}
  async home(){
   await this.shop.reset(this.uid);const demo=this.store.mode==='demo'?'\n\n<b>Демонстраційний магазин.</b> Ціни й характеристики попередні. Замовлення тестові, оплата не приймається.':'';
-  await this.send('<b>FORMULOVE</b>\nЛюбов до швидкості. Одяг на щодень.\n\nМаленька вишивка, стримані кольори та власні символи. Оберіть річ для себе або подарунок людині зі спільним захопленням.'+demo,HOME);
+  await this.send('<b>FORMULOVE</b>\nЛюбов до швидкості. Одяг на щодень.\n\nМаленька вишивка, стримані кольори та власні символи. Оберіть річ для себе або подарунок людині зі спільним захопленням.'+demo+(this.store.sales_mode==='preorder'?'\n\n'+PREORDER_NOTICE:''),HOME);
   await media(this.env,this.uid,this.shop.assets.welcome,this.store.images_are_concepts?'Концепції вишивки, не фото фізичного зразка.':'FORMULOVE');
   await this.send('З чого почнемо?',kb([btn('Обрати мерч','catalog')],[btn('Кошик','cart'),btn('Допомога з покупкою','info')]));
  }
@@ -32,12 +26,12 @@ export class Bot {
   const p=this.shop.get(id);
   let photo=this.shop.assets['product:'+id]||(p.photo?{kind:'photo',file_id:p.photo}:null),caption=p.name;
   const concept=Object.hasOwn(CONCEPT_PHOTOS,id)?CONCEPT_PHOTOS[id]:null;
-  if(!photo&&this.store.mode==='demo'&&concept&&this.env.PUBLIC_BASE_URL){
+  if(!photo&&(this.store.mode==='demo'||this.store.sales_mode==='preorder')&&concept&&this.env.PUBLIC_BASE_URL){
    photo={kind:'photo',file_id:new URL('/products/'+concept.file,this.env.PUBLIC_BASE_URL).href};
    caption+='\n'+concept.color+' · Візуалізація дизайну, не фото готового виробу.';
   }
   await media(this.env,this.uid,photo,caption);
-  const text='<b>'+esc(p.name)+'</b>\n<b>'+money(p.price_uah)+'</b>'+(p.pair?' за комплект із 2 речей':'')+'\n\n'+esc(p.description)+'\n\n'+esc(p.materials)+'\n'+esc(p.embroidery)+'\n\n'+esc(this.store.dispatch_text)+(this.store.mode==='demo'?'\n\nПопередні ціна й характеристики; зразок ще не затверджено.':'')+'\n\nОберіть колір:';
+  const text='<b>'+esc(p.name)+'</b>\n<b>'+money(p.price_uah)+'</b>'+(p.pair?' за комплект із 2 речей':'')+'\n\n'+esc(p.description)+'\n\n'+esc(p.materials)+'\n'+esc(p.embroidery)+'\n\n'+esc(this.store.dispatch_text)+(this.store.mode==='demo'?'\n\nПопередні ціна й характеристики; зразок ще не затверджено.':'')+(this.store.sales_mode==='preorder'?'\n\n'+PREORDER_NOTICE:'')+'\n\nОберіть колір:';
   await this.send(text,kb(...p.colors.map(c=>[btn(c.name,'color:'+id+':'+c.id)]),[btn('Розміри та посадка','measure:'+id)],[btn('Назад','cat:'+p.category),btn('Кошик','cart')]));
  }
  async sizes(id,color,size1=''){
@@ -61,11 +55,11 @@ export class Bot {
   lines.push('\n<b>Товари: '+money(total)+'</b>\nПакування оберете далі. Доставка й можлива комісія післяплати оплачуються окремо.');buttons.push([btn('Оформити замовлення','checkout')],[btn('Продовжити вибір','catalog'),btn('Очистити','clearask')]);await this.send(lines.join('\n'),kb(...buttons));
  }
  async checkout(){await this.shop.quote(this.uid);await this.shop.saveSession(this.uid,{step:'name',customer:{package:'standard'}},this.updateId);await this.send('<b>Оформлення · 1/8</b>\nВкажіть ім’я та прізвище одержувача.',this.back());}
- async consentText(){await this.send('<b>Оформлення · 8/8</b>\n'+esc(this.store.privacy_text)+'\n\nЗгода стосується обробки даних для цього замовлення, не рекламної розсилки.',kb([btn('Умови покупки','info:terms'),btn('Повернення','info:returns')],[btn('Погоджуюсь · перевірити замовлення','consent')],[btn('Не погоджуюсь · скасувати','checkout_cancel')]));}
+ async consentText(){await this.send('<b>Оформлення · 8/8</b>\n'+(this.store.sales_mode==='preorder'?PREORDER_NOTICE+'\n\n':'')+esc(this.store.privacy_text)+'\n\nЗгода стосується обробки даних для цього замовлення, не рекламної розсилки.',kb([btn('Умови покупки','info:terms'),btn('Повернення','info:returns')],[btn('Погоджуюсь · перевірити замовлення','consent')],[btn('Не погоджуюсь · скасувати','checkout_cancel')]));}
  async review(){
   const s=await this.shop.session(this.uid);const q=await this.shop.quote(this.uid,s.customer.package);s.step='review';s.token=randomToken();s.fingerprint=q.fingerprint;await this.shop.saveSession(this.uid,s,this.updateId);
-  const o={id:0,mode:this.store.mode,status:'new',items:q.items,customer:s.customer,package_name:q.package_name,goods_total:q.goods,packaging_total:q.packaging,total:q.total};
-  await this.send('<b>Перевірте перед підтвердженням</b>\n\n'+receipt(o,true)+'\n\nПідтвердження збереже замовлення. Менеджер погодить наявність і строк відправлення. Кошти зараз не списуються.',kb([btn(this.store.mode==='demo'?'Підтвердити тестове замовлення':'Підтвердити замовлення','place:'+s.token)],[btn('Ввести дані заново','checkout'),btn('Скасувати','checkout_cancel')]));
+  const o={id:0,mode:this.store.mode,status:'new',items:q.items,customer:{...s.customer,sale_type:this.store.sales_mode||'ready',preorder_notice:this.store.sales_mode==='preorder'?PREORDER_NOTICE:''},package_name:q.package_name,goods_total:q.goods,packaging_total:q.packaging,total:q.total};
+  await this.send('<b>Перевірте перед підтвердженням</b>\n\n'+receipt(o,true)+'\n\nПідтвердження збереже замовлення. Менеджер погодить наявність і строк відправлення. Кошти зараз не списуються.',kb([btn(this.store.mode==='demo'?'Підтвердити тестове замовлення':this.store.sales_mode==='preorder'?'Надіслати передзамовлення':'Підтвердити замовлення','place:'+s.token)],[btn('Ввести дані заново','checkout'),btn('Скасувати','checkout_cancel')]));
  }
  async text(message){
   const s=await this.shop.session(this.uid);if(s.last_update===this.updateId)return;const c=s.customer||{};const text=String(message.text||'').trim();
