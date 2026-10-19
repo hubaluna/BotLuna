@@ -14,7 +14,7 @@ export async function invoice(shop,id,uid){
  if(row)throw new ShopError('Рахунок уже створювався. Перевірте оплату або напишіть нам; новий рахунок автоматично не створюється.');
  const reference='FORMULOVE-'+id+'-'+randomToken();const claim=await run(shop.db,"INSERT OR IGNORE INTO payment_invoices(order_id,amount,created_at,reference) VALUES(?,?,?,?)",[id,o.total*100,stamp(),reference]);if(!claim.meta.changes)throw new ShopError('Рахунок уже готується. Відкрийте замовлення ще раз.');
  const base=new URL(shop.env.PUBLIC_BASE_URL).origin;
- const data=await mono(shop.env,'/api/merchant/invoice/create',{amount:o.total*100,ccy:980,merchantPaymInfo:{reference,destination:'FORMULOVE · замовлення №'+id},redirectUrl:base+'/payment-return',webHookUrl:base+'/payments/mono/'+await monoHook(shop.env),validity:86400,paymentType:'debit'});
+ const data=await mono(shop.env,'/api/merchant/invoice/create',{amount:o.total*100,ccy:980,merchantPaymInfo:{reference,destination:'Ваше замовлення FORMULOVE'},redirectUrl:base+'/payment-return',webHookUrl:base+'/payments/mono/'+await monoHook(shop.env),validity:86400,paymentType:'debit'});
  let url;try{url=new URL(data.pageUrl);}catch{throw new ShopError('Платіжний сервіс повернув некоректне посилання. Напишіть нам.');}
  if(url.protocol!=='https:'||!['pay.mbnk.biz','pay.monobank.ua'].includes(url.hostname)||!/^[-\w]{1,80}$/.test(data.invoiceId||''))throw new ShopError('Не вдалося перевірити посилання на оплату. Напишіть нам.');
  await run(shop.db,"UPDATE payment_invoices SET invoice_id=?,page_url=?,state='created' WHERE order_id=?",[data.invoiceId,url.href,id]);await run(shop.db,"UPDATE orders SET customer=json_set(customer,'$.payment','card') WHERE id=?",[id]);return first(shop.db,'SELECT * FROM payment_invoices WHERE order_id=?',[id]);
@@ -28,7 +28,7 @@ export async function syncInvoice(shop,id){
  const tasks=[stmt(shop.db,'UPDATE payment_invoices SET state=? WHERE order_id=?',[data.status,id])];
  if(['success','reversed'].includes(data.status)){
   tasks.push(stmt(shop.db,"INSERT OR IGNORE INTO order_money(order_id,kind,amount,reference,source,created_at) VALUES(?,'receipt',?,?,'monobank',?)",[id,row.amount,'mono:'+row.invoice_id,stamp()]));
-  if(data.status==='success')tasks.push(stmt(shop.db,"UPDATE orders SET status='paid' WHERE id=? AND status IN('confirmed','processing')",[id]));
+  if(data.status==='success')tasks.push(stmt(shop.db,"UPDATE orders SET status='paid' WHERE id=? AND (status='confirmed' OR (status='processing' AND NOT EXISTS(SELECT 1 FROM events WHERE order_id=? AND status='paid')))",[id,id]));
  }
  if(data.status==='success')for(const c of data.cancelList||[]){if(c.status!=='success')continue;if(!Number.isSafeInteger(c.amount)||c.amount<=0||c.ccy!==980||typeof c.extRef!=='string'||!c.extRef||c.extRef.length>100)throw new ShopError('Перевірте повернення в кабінеті банку.');tasks.push(stmt(shop.db,"INSERT OR IGNORE INTO order_money(order_id,kind,amount,reference,source,created_at) VALUES(?,'refund',?,?,'monobank',?)",[id,c.amount,'mono-refund:'+row.invoice_id+':'+c.extRef,stamp()]));}
  // The bank status is verified independently; an order cancellation never implies a cash refund.

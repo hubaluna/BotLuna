@@ -15,7 +15,7 @@
 /size heart — розмірна сітка товару
 /asset sizeguide — загальна схема замірів
 /photo heart — фото товару heart</div><p class="small">Каталог і зображення з попередньої версії збережені в комплекті. Для автоматичного повторення сповіщень при збої Telegram додайте Cron Trigger */5 * * * * у налаштуваннях Cloudflare.</p></section>
-<section><h2>Резервна копія налаштувань</h2><button id="backup" class="secondary">Зберегти JSON</button><p class="small">Це копія каталогу й текстів. Замовлення та зображення не включає. Для замовлень використайте /export у боті; повну D1-базу можна експортувати окремо в Cloudflare.</p></section></div><div class="footer">FORMULOVE · Кабінет адміністратора · Профілі, оплати та облік · Workers + D1. На безкоштовному тарифі діють ліміти Cloudflare.</div></main>
+<section><h2>Резервна копія налаштувань</h2><button id="backup" class="secondary">Зберегти JSON</button><p class="small">Це копія каталогу й текстів. Замовлення та зображення не включає. Для замовлень використайте /export у боті; повну D1-базу можна експортувати окремо в Cloudflare.</p></section></div><div class="footer">FORMULOVE · Кабінет адміністратора · Короткі сповіщення покупцям · Workers + D1. На безкоштовному тарифі діють ліміти Cloudflare.</div></main>
 <script>
 let state=null;const $=id=>document.getElementById(id);const fields=['mode','sales_mode','admin_ids','support_url','seller_name','seller_details','instagram_url','dispatch_text','delivery_text','payment_text','bank_details','returns_text','privacy_text','care_text'];
 const escapeHTML=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

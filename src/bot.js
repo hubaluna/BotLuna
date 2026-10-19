@@ -1,10 +1,11 @@
 import {AdminBot,OWNER_SHOP_HOME} from './admin-bot.js';
 import {BotFeatures,FEATURE_ACTIONS} from './bot-features.js';
 import {balances,recordReceipt} from './commerce.js';
+import {notifyBuyer} from './notifications.js';
 import { CONCEPT_PHOTOS,PREORDER_NOTICE,onlineReady,ShopError,STATUS,NEXT,DELIVERY,PAYMENTS,HOME,esc,money,phone,randomToken,adminIds,targets,stmt,first,all,run,epoch,stamp,telegram,TelegramError,btn,kb,send,media,publicError } from './core.js';
 
-export function receipt(o,details=false){
- const lines=[o.id?'<b>FORMULOVE · №'+String(o.id).padStart(6,'0')+'</b>':'<b>Ваше замовлення</b>'];
+export function receipt(o,details=false,admin=false){
+ const lines=[admin&&o.id?'<b>FORMULOVE · №'+String(o.id).padStart(6,'0')+'</b>':'<b>Ваше замовлення</b>'];
  if(o.mode==='demo')lines.push('Тестове замовлення — без оплати.');
  if(o.id)lines.push(STATUS[o.status]);
  for(const i of o.items)lines.push('\n'+esc(i.name)+'\n'+esc(i.label)+' · '+i.quantity+' × '+money(i.unit_price));
@@ -118,8 +119,8 @@ export class Bot {
   if(s.step==='comment'){if(text.length>500)throw new ShopError('Скоротіть побажання до 500 символів.');c.comment=text==='Пропустити'?'':text;return this.move({...s,customer:c},'consent');}
   return this.send('Оберіть варіант кнопкою нижче.',this.back());
  }
- async orders(admin=false){if(admin)return this.adminUI.orders();const rows=admin?await all(this.db,'SELECT id,status,total,mode FROM orders ORDER BY id DESC LIMIT 15'):await all(this.db,'SELECT id,status,total,mode FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 10',[this.uid]);if(!rows.length)return this.send('Замовлень поки немає.',this.support());await this.send(admin?'<b>Замовлення магазину</b>':'<b>Мої замовлення</b>',kb(...rows.map(o=>[btn('№'+String(o.id).padStart(6,'0')+' · '+STATUS[o.status]+' · '+money(o.total)+(o.mode==='demo'?' · тест':''),'order:'+o.id)]),[btn('Головна','home')]));}
- async viewOrder(id){
+ async orders(admin=false){if(admin)return this.adminUI.orders();const rows=await all(this.db,'SELECT id,status,total,mode,created_at FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 10',[this.uid]);if(!rows.length)return this.send('Замовлень поки немає.',this.support());await this.send('<b>Мої замовлення</b>',kb(...rows.map(o=>[btn(o.created_at.slice(0,10).split('-').reverse().join('.')+' · '+STATUS[o.status]+' · '+money(o.total)+(o.mode==='demo'?' · тест':''),'order:'+o.id)]),[btn('Головна','home')]));}
+ async viewOrder(id,details=false){
   const o=await this.shop.order(id),admin=adminIds(this.env).includes(this.uid);if(!o||(!admin&&o.user_id!==this.uid))throw new ShopError('Замовлення не знайдено.');const rows=[],b=await balances(this.shop,id);
   if(admin){for(const status of NEXT[o.status])if(!['shipped','paid'].includes(status))rows.push([btn(STATUS[status],'statusask:'+id+':'+status)]);
    if(['confirmed','paid','processing','shipped'].includes(o.status))rows.unshift([btn(o.tracking?'Змінити ТТН':'Додати ТТН','track:'+id)]);
@@ -128,8 +129,10 @@ export class Bot {
   if(o.mode==='live'&&onlineReady(this.env)&&['confirmed','processing'].includes(o.status)&&b.received===0&&o.user_id===this.uid)rows.push([btn('Оплатити карткою / гаманцем','pay:'+id)]);
   const existingInvoice=await first(this.db,'SELECT invoice_id FROM payment_invoices WHERE order_id=?',[id]);if(existingInvoice?.invoice_id)rows.push([btn('Перевірити оплату','paycheck:'+id)]);
   if(admin)rows.push([btn('Повернення коштів · запис','am:refundfor:'+id)],[btn('Кабінет адміністратора','am:home')]);
+  else rows.push([btn(details?'Згорнути деталі':'Деталі замовлення',(details?'order:':'orderdetails:')+id)]);
   rows.push([btn(admin?'Усі замовлення':'Мої замовлення',admin?'adminorders':'orders'),this.contact()]);
-  await this.send(receipt(o,true)+(b.received?'\n\nЗаписані оплати: '+money(b.received/100)+(b.refunded?' · повернуто '+money(b.refunded/100):''):''),kb(...rows));
+  const summary='<b>Ваше замовлення</b>\n'+STATUS[o.status]+'\nРазом: '+money(o.total)+(o.tracking?'\nТТН: <code>'+esc(o.tracking)+'</code>':'')+(o.mode==='demo'?'\nТестове замовлення — без оплати.':'');
+  await this.send((admin||details?receipt(o,true,admin):summary)+(b.received?'\n\n'+(admin?'Записані оплати: ':'Отримано: ')+money(b.received/100)+(b.refunded?' · повернуто '+money(b.refunded/100):''):''),kb(...rows));
  }
  async info(topic=''){
   if(!topic)return this.send('<b>Допомога</b>',kb([this.contact()],[btn('Доставка','info:delivery'),btn('Оплата','info:payment')],[btn('Обмін і повернення','info:returns')],[btn('Інші питання','info:more')],[btn('Показати все','all:0'),btn('Кошик','cart')]));
@@ -158,9 +161,9 @@ export class Bot {
    if(action==='skipcomment'){c.comment='';return this.move(s,'consent');}c.consent=true;await this.shop.saveSession(this.uid,s,this.updateId);return this.review();
   }
   if(action==='place'){const old=await first(this.db,'SELECT id FROM orders WHERE token=? AND user_id=?',[p[0],this.uid]);if(old)return this.viewOrder(old.id);const s=await this.shop.session(this.uid);if(s.step!=='review'||s.token!==p[0])throw new ShopError('Перевірте замовлення ще раз перед підтвердженням.');await this.shop.place(this.uid,s.token,s.customer,s.fingerprint);return;}
-  if(action==='orders')return this.orders();if(action==='order')return this.viewOrder(Number(p[0]));
-  if(action==='cancelask'){const o=await this.shop.order(Number(p[0]));if(!o||o.user_id!==this.uid||o.status!=='new')throw new ShopError('Для скасування напишіть нам.');return this.send('Скасувати замовлення №'+o.id+'?',kb([btn('Скасувати','canceldo:'+o.id),btn('Залишити','order:'+o.id)]));}
-  if(action==='canceldo'){await this.shop.status(Number(p[0]),'cancelled',this.uid,{buyer:true});return this.viewOrder(Number(p[0]));}
+  if(action==='orders')return this.orders();if(action==='order'||action==='orderdetails')return this.viewOrder(Number(p[0]),action==='orderdetails');
+  if(action==='cancelask'){const o=await this.shop.order(Number(p[0]));if(!o||o.user_id!==this.uid||o.status!=='new')throw new ShopError('Для скасування напишіть нам.');return this.send('Скасувати ваше замовлення?',kb([btn('Скасувати','canceldo:'+o.id),btn('Залишити','order:'+o.id)]));}
+  if(action==='canceldo'){await this.shop.status(Number(p[0]),'cancelled',this.uid,{buyer:true});return;}
   if(['statusask','status','adminorders'].includes(action)){
    if(!adminIds(this.env).includes(this.uid))throw new ShopError('Немає доступу.');if(action==='adminorders')return this.orders(true);const id=Number(p[0]),status=p[1];if(!STATUS[status])throw new ShopError('Оберіть статус зі списку.');
    if(action==='statusask')return this.send('Замовлення №'+id+' → '+STATUS[status]+'?'+(status==='cancelled'?'\nКошти, якщо були сплачені, повертаються окремо.':''),kb([btn('Підтвердити','status:'+id+':'+status),btn('Назад','order:'+id)]));if(status==='paid')await recordReceipt(this.shop,id,this.uid,'manual:'+id);else await this.shop.status(id,status,this.uid);return this.viewOrder(id);
@@ -212,9 +215,15 @@ export class Bot {
 export async function drain(shop,limit=4){
  const db=shop.db,env=shop.env;const candidates=await all(db,"SELECT id FROM outbox WHERE (state='pending' AND next_try<=?) OR (state='sending' AND lock_until<?) ORDER BY id LIMIT ?",[epoch(),epoch(),limit]);
  for(const r of candidates){const event=await first(db,"UPDATE outbox SET state='sending',lock_until=? WHERE id=? AND ((state='pending' AND next_try<=?) OR (state='sending' AND lock_until<?)) RETURNING *",[epoch()+90,r.id,epoch(),epoch()]);if(!event)continue;
-  try{const o=await shop.order(event.order_id);let text=receipt(o,['buyer_new','admin_new','admin_status'].includes(event.kind));
-   if(event.kind==='buyer_new')text='<b>Замовлення отримали</b>\n\n'+text+'\n\n'+(o.mode==='demo'?'Це тест — без оплати.':'Напишемо вам, щоб погодити деталі.');
-   if(event.kind==='buyer_status'&&o.status==='confirmed'&&o.customer.payment==='transfer'&&o.mode==='live')text+='\n\nРеквізити:\n'+esc(shop.store.bank_details)+'\nПризначення: замовлення FORMULOVE №'+o.id+'.';
+  try{const o=await shop.order(event.order_id);
+   if(event.kind.startsWith('buyer_')){
+    let topic=event.kind==='buyer_new'?'new':'status';
+    // If preparation overtook delivery, retain the last useful confirmation/payment
+    // milestone, without sending an additional message for the preparation step.
+    if(topic==='status'&&o.status==='processing'){const milestone=await first(db,"SELECT status FROM events WHERE order_id=? AND status IN('confirmed','paid') ORDER BY id DESC LIMIT 1",[o.id]);topic=milestone?.status||'status';}
+    const result=await notifyBuyer(shop,o,topic);if(result==='busy'){await run(db,"UPDATE outbox SET state='pending',next_try=?,lock_until=0 WHERE id=?",[epoch()+95,event.id]);continue;}await run(db,"UPDATE outbox SET state='done',lock_until=0 WHERE id=?",[event.id]);continue;
+   }
+   let text=receipt(o,true,true);
    if(event.chat_id<0)text+='\n\nДля керування відкрийте приватний чат з ботом: /order '+o.id;
    const controls=[[btn('Відкрити замовлення','order:'+o.id)]];if(event.chat_id===o.user_id&&o.mode==='live'&&onlineReady(env)&&o.status==='confirmed')controls.unshift([btn('Оплатити карткою / гаманцем','pay:'+o.id)]);await send(env,event.chat_id,text,event.chat_id<0?kb():kb(...controls));await run(db,"UPDATE outbox SET state='done',lock_until=0 WHERE id=?",[event.id]);
   }catch(error){const delay=Math.max(error.retry||0,Math.min(3600,30*2**Math.min(event.attempts,6)));await run(db,"UPDATE outbox SET state='pending',attempts=attempts+1,next_try=?,lock_until=0 WHERE id=?",[epoch()+delay,event.id]);}

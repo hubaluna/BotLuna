@@ -7,8 +7,8 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "check": "node --check src/worker.js && node --check src/core.js && node --check src/bot.js && node --check src/bot-features.js && node --check src/commerce.js && node --check src/payments.js && node --check src/admin-bot.js",
-    "test": "node tests/shop.test.js && node tests/commerce.test.js && node tests/admin.test.js",
+    "check": "node --check src/worker.js && node --check src/core.js && node --check src/bot.js && node --check src/bot-features.js && node --check src/commerce.js && node --check src/payments.js && node --check src/admin-bot.js && node --check src/notifications.js",
+    "test": "node tests/shop.test.js && node tests/commerce.test.js && node tests/admin.test.js && node tests/notifications.test.js",
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "build": "node build.mjs"

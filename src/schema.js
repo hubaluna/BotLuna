@@ -56,6 +56,7 @@ export const SCHEMA = [
 ];
 
 export const COMMERCE_SCHEMA=[
+`CREATE TABLE IF NOT EXISTS buyer_notifications(order_id INTEGER NOT NULL REFERENCES orders(id),topic TEXT NOT NULL,signature TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',lock_until INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(order_id,topic,signature))`,
 `CREATE TABLE IF NOT EXISTS customers(user_id INTEGER PRIMARY KEY,phone TEXT NOT NULL DEFAULT '',full_name TEXT NOT NULL DEFAULT '',verified_at TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,last_seen TEXT NOT NULL,marketing INTEGER NOT NULL DEFAULT 0 CHECK(marketing IN(0,1)),marketing_at TEXT NOT NULL DEFAULT '',blocked INTEGER NOT NULL DEFAULT 0)`,
 `CREATE TABLE IF NOT EXISTS consent_events(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL,topic TEXT NOT NULL,accepted INTEGER NOT NULL,created_at TEXT NOT NULL)`,
 `CREATE TABLE IF NOT EXISTS campaigns(id INTEGER PRIMARY KEY,text TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'draft',created_at TEXT NOT NULL,actor INTEGER NOT NULL)`,
@@ -70,6 +71,7 @@ END`
 ];
 export async function ensureCommerce(db){
  const version=await db.prepare("SELECT value FROM settings WHERE key='commerce_schema'").first();
- if(version?.value==='1')return;
- await db.batch([...COMMERCE_SCHEMA.map(q=>db.prepare(q)),db.prepare("INSERT INTO settings VALUES('commerce_schema','1') ON CONFLICT(key) DO UPDATE SET value='1'")]);
+ if(version?.value==='2')return;
+ const migration=version?.value==='1'?[COMMERCE_SCHEMA[0]]:COMMERCE_SCHEMA;
+ await db.batch([...migration.map(q=>db.prepare(q)),db.prepare("INSERT INTO settings VALUES('commerce_schema','2') ON CONFLICT(key) DO UPDATE SET value='2'")]);
 }
