@@ -245,7 +245,7 @@ test('copy upgrade replaces exact legacy drafts while preserving every custom ow
 });
 test('owner menu is concise and admin help and export remain inaccessible to buyers',async()=>{
  await assert.rejects(cb('adminhelp:export'),ShopError);await assert.rejects(message('/admin'),ShopError);assert.equal(sent().length,0);
- await message('/admin',900);assert(sent()[0].data.text.length<100);assert(inline(sent()[0]).some(b=>b.callback_data==='adminhelp:photos'));
+ await message('/admin',900);assert(sent()[0].data.text.length<600);assert(sent()[0].data.reply_markup.keyboard.flat().some(b=>b.text==='Товари'));
  calls.length=0;await cb('adminhelp:photos',900);assert(sent()[0].data.text.includes('\n'));assert(!sent()[0].data.text.includes('\\n'));assert(sent()[0].data.text.includes('/photo heart'));
 });
 test('gallery webhook is retry-safe and remains below the D1 free-plan query limit',async()=>{

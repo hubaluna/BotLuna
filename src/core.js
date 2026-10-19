@@ -41,6 +41,7 @@ export function validateCatalog(catalog){
 }
 export function validateStore(s){
  if(s.sales_mode!==undefined&&!['preorder','ready'].includes(s.sales_mode))throw new ShopError('Оберіть передзамовлення або готові товари.');
+ if(s.orders_paused!==undefined&&typeof s.orders_paused!=='boolean')throw new ShopError('Перевірте перемикач приймання замовлень.');
  if(s.card_enabled!==undefined&&typeof s.card_enabled!=='boolean')throw new ShopError('Перевірте перемикач онлайн-оплати.');
  if(s.admin_ids!==undefined&&(typeof s.admin_ids!=='string'||s.admin_ids.length>250||(s.admin_ids&&!/^\d+(?:\s*,\s*\d+)*$/.test(s.admin_ids))))throw new ShopError('Telegram ID власника — додатні числа через кому.');
  if(s.brand!=='FORMULOVE'||!['demo','live'].includes(s.mode))throw new ShopError('Назва FORMULOVE; режим demo або live.');
@@ -101,6 +102,7 @@ export class Shop {
  async order(id){const o=await first(this.db,'SELECT * FROM orders WHERE id=?',[id]);return o?{...o,items:JSON.parse(o.items),customer:JSON.parse(o.customer)}:null;}
  async place(uid,token,customer,fingerprint){
   const old=await first(this.db,'SELECT id,user_id FROM orders WHERE token=?',[token]);if(old){if(old.user_id!==uid)throw new ShopError('Підтвердження недійсне.');return {order:await this.order(old.id),created:false};}
+  if(this.store.orders_paused)throw new ShopError('Приймання нових замовлень тимчасово призупинено. Напишіть нам.');
   const account=await first(this.db,'SELECT phone,verified_at FROM customers WHERE user_id=?',[uid]);if(!account?.verified_at)throw new ShopError('Підтвердіть свій номер кнопкою Telegram: /start.');
   this.validateCustomer(customer);const q=await this.quote(uid,customer.package);if(q.fingerprint!==fingerprint)throw new ShopError('Кошик або ціни змінилися. Перевірте замовлення ще раз.');
   if(this.store.mode==='live'&&this.liveIssues().length)throw new ShopError('Магазин оновлюється. Зверніться до FORMULOVE.');
@@ -140,12 +142,14 @@ export class Shop {
   return issues;
  }
  async saveConfig(store,catalog){
+  if(store.revision&&store.revision!==this.store.revision)throw new ShopError('Налаштування вже змінено. Оновіть панель перед збереженням.');
   validateStore(store);validateCatalog(catalog);
   const previousStore=this.store,previousProducts=this.products;store={...store,revision:randomToken()};
   this.store=store;this.products=Object.fromEntries(catalog.products.map(p=>[p.id,p]));
   if(store.mode==='live'&&this.liveIssues().length){const issues=this.liveIssues();this.store=previousStore;this.products=previousProducts;throw new ShopError('Для live заповніть: '+issues.join('; '));}
-  const tasks=[stmt(this.db,"INSERT INTO settings VALUES('store',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[JSON.stringify(store)]),stmt(this.db,"INSERT INTO settings VALUES('categories',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[JSON.stringify(catalog.categories)]),stmt(this.db,'UPDATE products SET active=0'),stmt(this.db,"INSERT INTO products(id,price,active,data) SELECT json_extract(value,'$.id'),json_extract(value,'$.price_uah'),json_extract(value,'$.active'),value FROM json_each(?) WHERE 1 ON CONFLICT(id) DO UPDATE SET price=excluded.price,active=excluded.active,data=excluded.data",[JSON.stringify(catalog.products)]),stmt(this.db,"INSERT OR IGNORE INTO stock(variant,quantity) SELECT json_extract(value,'$.variant'),json_extract(value,'$.quantity') FROM json_each(?)",[JSON.stringify(variants(catalog))])];
-  await this.db.batch(tasks);return this.load();
+  // The NOT NULL guard aborts the entire D1 transaction if another writer won after load().
+  const tasks=[stmt(this.db,"INSERT INTO mutations(operation,created_at) SELECT ?,CASE WHEN (SELECT json_extract(value,'$.revision') FROM settings WHERE key='store')=? THEN ? ELSE NULL END",['config:'+store.revision,previousStore.revision,epoch()]),stmt(this.db,"INSERT INTO settings VALUES('store',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[JSON.stringify(store)]),stmt(this.db,"INSERT INTO settings VALUES('categories',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[JSON.stringify(catalog.categories)]),stmt(this.db,'UPDATE products SET active=0'),stmt(this.db,"INSERT INTO products(id,price,active,data) SELECT json_extract(value,'$.id'),json_extract(value,'$.price_uah'),json_extract(value,'$.active'),value FROM json_each(?) WHERE 1 ON CONFLICT(id) DO UPDATE SET price=excluded.price,active=excluded.active,data=excluded.data",[JSON.stringify(catalog.products)]),stmt(this.db,"INSERT OR IGNORE INTO stock(variant,quantity) SELECT json_extract(value,'$.variant'),json_extract(value,'$.quantity') FROM json_each(?)",[JSON.stringify(variants(catalog))])];
+  try{await this.db.batch(tasks);}catch(error){this.store=previousStore;this.products=previousProducts;if(String(error?.message).includes('mutations.created_at'))throw new ShopError('Налаштування вже змінилися. Оновіть панель і повторіть дію.');throw error;}return this.load();
  }
 }
 

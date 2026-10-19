@@ -4,7 +4,7 @@ import re,json,gzip
 root=Path(__file__).resolve().parent
 html=(root/'src/admin.html').read_text()
 (root/'src/ui.js').write_text('export const SETUP_HTML = '+json.dumps(html,ensure_ascii=False)+';\n')
-files=['defaults.js','schema.js','copy.js','core.js','commerce.js','payments.js','bot-features.js','bot.js','ui.js','worker.js']
+files=['defaults.js','schema.js','copy.js','core.js','commerce.js','payments.js','bot-features.js','admin-bot.js','bot.js','ui.js','worker.js']
 parts=['// FORMULOVE Cloudflare Workers + D1. Generated single-file dashboard edition.\n']
 for name in files:
     source=(root/'src'/name).read_text()

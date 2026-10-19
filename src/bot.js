@@ -1,3 +1,4 @@
+import {AdminBot,OWNER_SHOP_HOME} from './admin-bot.js';
 import {BotFeatures,FEATURE_ACTIONS} from './bot-features.js';
 import {balances,recordReceipt} from './commerce.js';
 import { CONCEPT_PHOTOS,PREORDER_NOTICE,onlineReady,ShopError,STATUS,NEXT,DELIVERY,PAYMENTS,HOME,esc,money,phone,randomToken,adminIds,targets,stmt,first,all,run,epoch,stamp,telegram,TelegramError,btn,kb,send,media,publicError } from './core.js';
@@ -18,7 +19,7 @@ const PREVIOUS={name:'recipient',phone:'name',city:'phone',delivery:'city',branc
 const shortName=p=>p.name.length>48?p.name.slice(0,45)+'…':p.name;
 
 export class Bot {
- constructor(shop,uid,updateId){this.shop=shop;this.db=shop.db;this.env=shop.env;this.uid=uid;this.updateId=updateId;this.features=new BotFeatures(this);}
+ constructor(shop,uid,updateId){this.shop=shop;this.db=shop.db;this.env=shop.env;this.uid=uid;this.updateId=updateId;this.features=new BotFeatures(this);this.adminUI=new AdminBot(this);}
  get store(){return this.shop.store;}
  send(text,markup){return send(this.env,this.uid,text,markup);}
  back(previous=true){return kb(...(previous?[[btn('Назад','checkout_back')]]:[]),[btn('Скасувати','checkout_cancel')]);}
@@ -32,8 +33,8 @@ export class Bot {
  }
  async home(){
   await this.shop.reset(this.uid);
-  const text='<b>FORMULOVE</b>\n\nОдяг з вишивкою для фанатів Формули 1.\nПерегляньте всі моделі або оберіть категорію.'+(this.store.mode==='demo'?'\n\nТестовий режим — замовлення без оплати.':'');
-  if(!await media(this.env,this.uid,this.shop.assets.welcome,text,HOME))await this.send(text,HOME);
+  const text='<b>FORMULOVE</b>\n\nОдяг з вишивкою для фанатів Формули 1.\nПерегляньте всі моделі або оберіть категорію.'+(this.store.orders_paused?'\n\nПриймання нових замовлень тимчасово призупинено.':'')+(this.store.mode==='demo'?'\n\nТестовий режим — замовлення без оплати.':'');
+  const menu=adminIds(this.env).includes(this.uid)?OWNER_SHOP_HOME:HOME;if(!await media(this.env,this.uid,this.shop.assets.welcome,text,menu))await this.send(text,menu);
  }
  async catalog(){
   const rows=this.shop.categories.filter(c=>Object.values(this.shop.products).some(p=>p.active&&p.category===c.id)).map(c=>[btn(c.name,'cat:'+c.id)]);
@@ -117,7 +118,7 @@ export class Bot {
   if(s.step==='comment'){if(text.length>500)throw new ShopError('Скоротіть побажання до 500 символів.');c.comment=text==='Пропустити'?'':text;return this.move({...s,customer:c},'consent');}
   return this.send('Оберіть варіант кнопкою нижче.',this.back());
  }
- async orders(admin=false){const rows=admin?await all(this.db,'SELECT id,status,total,mode FROM orders ORDER BY id DESC LIMIT 15'):await all(this.db,'SELECT id,status,total,mode FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 10',[this.uid]);if(!rows.length)return this.send('Замовлень поки немає.',this.support());await this.send(admin?'<b>Замовлення магазину</b>':'<b>Мої замовлення</b>',kb(...rows.map(o=>[btn('№'+String(o.id).padStart(6,'0')+' · '+STATUS[o.status]+' · '+money(o.total)+(o.mode==='demo'?' · тест':''),'order:'+o.id)]),[btn('Головна','home')]));}
+ async orders(admin=false){if(admin)return this.adminUI.orders();const rows=admin?await all(this.db,'SELECT id,status,total,mode FROM orders ORDER BY id DESC LIMIT 15'):await all(this.db,'SELECT id,status,total,mode FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 10',[this.uid]);if(!rows.length)return this.send('Замовлень поки немає.',this.support());await this.send(admin?'<b>Замовлення магазину</b>':'<b>Мої замовлення</b>',kb(...rows.map(o=>[btn('№'+String(o.id).padStart(6,'0')+' · '+STATUS[o.status]+' · '+money(o.total)+(o.mode==='demo'?' · тест':''),'order:'+o.id)]),[btn('Головна','home')]));}
  async viewOrder(id){
   const o=await this.shop.order(id),admin=adminIds(this.env).includes(this.uid);if(!o||(!admin&&o.user_id!==this.uid))throw new ShopError('Замовлення не знайдено.');const rows=[],b=await balances(this.shop,id);
   if(admin){for(const status of NEXT[o.status])if(!['shipped','paid'].includes(status))rows.push([btn(STATUS[status],'statusask:'+id+':'+status)]);
@@ -126,6 +127,7 @@ export class Bot {
   }else if(o.status==='new')rows.push([btn('Скасувати замовлення','cancelask:'+id)]);
   if(o.mode==='live'&&onlineReady(this.env)&&['confirmed','processing'].includes(o.status)&&b.received===0&&o.user_id===this.uid)rows.push([btn('Оплатити карткою / гаманцем','pay:'+id)]);
   const existingInvoice=await first(this.db,'SELECT invoice_id FROM payment_invoices WHERE order_id=?',[id]);if(existingInvoice?.invoice_id)rows.push([btn('Перевірити оплату','paycheck:'+id)]);
+  if(admin)rows.push([btn('Повернення коштів · запис','am:refundfor:'+id)],[btn('Кабінет адміністратора','am:home')]);
   rows.push([btn(admin?'Усі замовлення':'Мої замовлення',admin?'adminorders':'orders'),this.contact()]);
   await this.send(receipt(o,true)+(b.received?'\n\nЗаписані оплати: '+money(b.received/100)+(b.refunded?' · повернуто '+money(b.refunded/100):''):''),kb(...rows));
  }
@@ -138,6 +140,7 @@ export class Bot {
  }
  async callback(data){
   const [action,...p]=String(data).split(':');
+  if(action==='am')return this.adminUI.callback(p);
   if(FEATURE_ACTIONS.has(action))return this.features.callback(action,p);
   if(action==='home')return this.home();if(action==='catalog'){await this.shop.reset(this.uid);return this.catalog();}if(action==='all'){await this.shop.reset(this.uid);return this.gallery(p[0]?Number(p[0]):0,p[1]||'');}
   if(action==='cat')return this.category(p[0]);if(action==='product')return this.product(p[0]);if(action==='measure')return this.measures(p[0]);if(action==='color')return this.sizes(p[0],p[1]);
@@ -167,7 +170,7 @@ export class Bot {
  }
  async adminHelp(topic='menu'){
   if(!adminIds(this.env).includes(this.uid))throw new ShopError('Немає доступу.');
-  if(topic==='stats')return this.admin('/stats',{});if(topic==='export')return this.export();
+  if(topic==='menu')return this.adminUI.dashboard();if(topic==='stats')return this.admin('/stats',{});if(topic==='export')return this.export();
   const menu=kb([btn('Замовлення','adminorders'),btn('Підсумки','adminhelp:stats')],[btn('Ціни й залишки','adminhelp:stock')],[btn('Зображення','adminhelp:photos'),btn('Експорт CSV','adminhelp:export')],[btn('Новини підписникам','campaignstart')],[btn('Команди','adminhelp:commands')]);
   const texts={menu:'<b>Керування FORMULOVE</b>',stock:'<b>Ціни й залишки</b>\n/price heart 1190 — змінити ціну\n/variants heart — варіанти товару\n/stock heart:black:M: 5 — залишок\n/show heart on або off — показати чи сховати\n\nПовний каталог редагується в панелі /setup.',photos:'<b>Зображення</b>\nНадішліть фото з підписом /photo heart. Замість heart — ID потрібного товару.\n\n/asset welcome — зображення на головній\n/asset packaging — пакування\n/size heart — сітка товару\n/asset sizeguide — загальна схема замірів\n\nФото або файл PNG/JPEG/WebP.',commands:'<b>Команди</b>\n/orders — усі замовлення\n/order 1 — відкрити замовлення\n/ship 1 ТТН — додати ТТН\n/stats — суми замовлень\n/export — вивантажити CSV'};
   return this.send(texts[topic]||texts.menu,menu);
@@ -200,6 +203,7 @@ export class Bot {
   const q=update.callback_query,m=q?.message||update.message,sender=q?.from||m?.from;if(!sender||sender.is_bot||m?.chat?.type!=='private'||m.chat.id!==this.uid)return;
   if(q){try{await telegram(this.env,'answerCallbackQuery',{callback_query_id:q.id});}catch{}if(!await this.features.gate(String(q.data).split(':')[0]))return;return this.callback(q.data);}
   const raw=String(m.text||m.caption||'').trim(),space=raw.indexOf(' '),head=(space<0?raw:raw.slice(0,space)).split('@')[0],text=head+(space<0?'':raw.slice(space));
+  if(await this.adminUI.message(m,raw,head))return;
   if(await this.features.message(m,raw,head))return;
   if(head==='/start'||raw==='Головне меню')return this.home();if(head==='/all'||raw==='Показати все'||raw==='Усі моделі')return this.callback('all:0');if(raw==='Назад')return this.checkoutBack();if(head==='/id')return this.send('Ваш Telegram ID: <code>'+this.uid+'</code>');if(head==='/cancel'||raw==='Скасувати оформлення')return this.callback('checkout_cancel');if(head==='/catalog'||raw==='Каталог')return this.callback('catalog');if(head==='/cart'||raw==='Кошик')return this.callback('cart');if(head==='/orders')return this.orders(adminIds(this.env).includes(this.uid));if(raw==='Мої замовлення')return this.orders();if(head==='/help'||raw==='Про покупку'||raw==='Допомога')return this.info();if(head.startsWith('/'))return this.admin(text,m);return this.text(m);
  }
