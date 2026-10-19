@@ -1,3 +1,9 @@
 # Only placeholders. Real values belong in Cloudflare Worker Secrets.
 BOT_TOKEN=""
 SETUP_KEY=""
+
+# Optional merchant acquiring token: configure real values only in Cloudflare Secrets.
+# MONO_TOKEN=
+# MONO_LIVE=true
+# Optional read-only Google Sheets reports key, at least 32 random characters.
+# REPORT_KEY=

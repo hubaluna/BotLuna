@@ -54,3 +54,22 @@ export const SCHEMA = [
  INSERT INTO outbox(chat_id,order_id,kind) SELECT CAST(value AS INTEGER),NEW.id,'admin_status' FROM json_each(NEW.admin_targets) WHERE NEW.status='cancelled';
  END`
 ];
+
+export const COMMERCE_SCHEMA=[
+`CREATE TABLE IF NOT EXISTS customers(user_id INTEGER PRIMARY KEY,phone TEXT NOT NULL DEFAULT '',full_name TEXT NOT NULL DEFAULT '',verified_at TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,last_seen TEXT NOT NULL,marketing INTEGER NOT NULL DEFAULT 0 CHECK(marketing IN(0,1)),marketing_at TEXT NOT NULL DEFAULT '',blocked INTEGER NOT NULL DEFAULT 0)`,
+`CREATE TABLE IF NOT EXISTS consent_events(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL,topic TEXT NOT NULL,accepted INTEGER NOT NULL,created_at TEXT NOT NULL)`,
+`CREATE TABLE IF NOT EXISTS campaigns(id INTEGER PRIMARY KEY,text TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'draft',created_at TEXT NOT NULL,actor INTEGER NOT NULL)`,
+`CREATE TABLE IF NOT EXISTS campaign_deliveries(campaign_id INTEGER NOT NULL REFERENCES campaigns(id),user_id INTEGER NOT NULL,state TEXT NOT NULL DEFAULT 'pending',attempts INTEGER NOT NULL DEFAULT 0,next_try INTEGER NOT NULL DEFAULT 0,lock_until INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(campaign_id,user_id))`,
+`CREATE TABLE IF NOT EXISTS order_money(id INTEGER PRIMARY KEY,order_id INTEGER NOT NULL REFERENCES orders(id),kind TEXT NOT NULL CHECK(kind IN('receipt','refund')),amount INTEGER NOT NULL CHECK(amount>0),reference TEXT NOT NULL UNIQUE,source TEXT NOT NULL,created_at TEXT NOT NULL)`,
+`CREATE TABLE IF NOT EXISTS expenses(id INTEGER PRIMARY KEY,mode TEXT NOT NULL DEFAULT 'live' CHECK(mode IN('demo','live')),amount INTEGER NOT NULL CHECK(amount>0),category TEXT NOT NULL,note TEXT NOT NULL,created_at TEXT NOT NULL,reference TEXT NOT NULL UNIQUE)`,
+`CREATE TABLE IF NOT EXISTS payment_invoices(order_id INTEGER PRIMARY KEY REFERENCES orders(id),invoice_id TEXT UNIQUE,page_url TEXT NOT NULL DEFAULT '',amount INTEGER NOT NULL,state TEXT NOT NULL DEFAULT 'creating',created_at TEXT NOT NULL,checked_at INTEGER NOT NULL DEFAULT 0,reference TEXT NOT NULL UNIQUE)`,
+`CREATE TRIGGER IF NOT EXISTS money_check BEFORE INSERT ON order_money WHEN NOT EXISTS(SELECT 1 FROM order_money WHERE reference=NEW.reference) BEGIN
+ SELECT CASE WHEN NEW.kind='receipt' AND NEW.amount+(SELECT COALESCE(SUM(amount),0) FROM order_money WHERE order_id=NEW.order_id AND kind='receipt')>(SELECT total*100 FROM orders WHERE id=NEW.order_id) THEN RAISE(ABORT,'PAYMENT_LIMIT') END;
+ SELECT CASE WHEN NEW.kind='refund' AND NEW.amount+(SELECT COALESCE(SUM(amount),0) FROM order_money WHERE order_id=NEW.order_id AND kind='refund')>(SELECT COALESCE(SUM(amount),0) FROM order_money WHERE order_id=NEW.order_id AND kind='receipt') THEN RAISE(ABORT,'REFUND_LIMIT') END;
+END`
+];
+export async function ensureCommerce(db){
+ const version=await db.prepare("SELECT value FROM settings WHERE key='commerce_schema'").first();
+ if(version?.value==='1')return;
+ await db.batch([...COMMERCE_SCHEMA.map(q=>db.prepare(q)),db.prepare("INSERT INTO settings VALUES('commerce_schema','1') ON CONFLICT(key) DO UPDATE SET value='1'")]);
+}

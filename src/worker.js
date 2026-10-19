@@ -1,7 +1,9 @@
 import { DEFAULT_CATALOG } from './defaults.js';
 import { SETUP_HTML } from './ui.js';
-import { Shop,ShopError,initialize,sha,adminIds,first,all,run,stmt,epoch,stamp,telegram,publicError } from './core.js';
+import { Shop,ShopError,initialize,sha,adminIds,first,all,run,stmt,epoch,stamp,telegram,publicError,onlineReady } from './core.js';
 import { Bot,drain } from './bot.js';
+import {analytics,accountingCSV,expense,pennies,recordReceipt,recordRefund,balances,drainCampaigns} from './commerce.js';
+import {monoHook,syncInvoice,pollPayments} from './payments.js';
 
 const security={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY'};
 function json(value,status=200){return Response.json(value,{status,headers:security});}
@@ -20,15 +22,30 @@ export async function setup(request,env,url){
  try{
   if(action==='init'){await initialize(env.DB);return json({ok:true,note:'Базу підготовлено без видалення чинних даних.'});}
   const shop=await new Shop(env).load();
-  if(action==='state')return json({store:shop.store,catalog:{currency:'UAH',categories:shop.categories,products:Object.values(shop.products)},admin_count:adminIds(shop.env).length,live_issues:shop.liveIssues(),asset_keys:Object.keys(shop.assets)});
+  if(action==='state')return json({store:shop.store,catalog:{currency:'UAH',categories:shop.categories,products:Object.values(shop.products)},admin_count:adminIds(shop.env).length,live_issues:shop.liveIssues(),asset_keys:Object.keys(shop.assets),payments:{provider:'monobank',configured:onlineReady(env)},reports_ready:!!env.REPORT_KEY&&env.REPORT_KEY.length>=32});
   if(action==='save'){await shop.saveConfig(body.store,body.catalog);return json({ok:true});}
+  if(action==='analytics')return json(await analytics(shop,body));
+  if(action==='export')return json({csv:await accountingCSV(shop,body.type,body)});
+  if(action==='expense'){await expense(shop,{amount:pennies(body.amount),category:body.category,note:body.note||'',reference:String(body.reference||'')});return json({ok:true});}
+  if(action==='order'){const order=await shop.order(Number(body.id));if(!order)throw new ShopError('Замовлення не знайдено.');return json({order,balance:await balances(shop,order.id)});}
+  if(action==='tracking'){
+   const order=await shop.order(Number(body.id)),tracking=String(body.tracking||'');if(!order||!/^\d{14}$/.test(tracking))throw new ShopError('Перевірте замовлення та 14 цифр ТТН.');
+   if(order.status==='shipped')await env.DB.batch([stmt(env.DB,"UPDATE orders SET tracking=? WHERE id=? AND status='shipped'",[tracking,order.id]),stmt(env.DB,"INSERT INTO outbox(chat_id,order_id,kind) VALUES(?,?,'buyer_status')",[order.user_id,order.id])]);
+   else await shop.status(order.id,'shipped',adminIds(shop.env)[0],{tracking});return json({ok:true});
+  }
+  if(action==='money'){
+   if(body.confirmed!==true)throw new ShopError('Підтвердіть, що гроші фактично отримано або повернуто.');
+   const id=Number(body.id);if(body.kind==='receipt')await recordReceipt(shop,id,adminIds(shop.env)[0],'manual:'+id);
+   else if(body.kind==='refund'){if(typeof body.reference!=='string'||body.reference.length<8||body.reference.length>100)throw new ShopError('Перевірте ідентифікатор запису.');await recordRefund(shop,id,pennies(body.amount),body.reference);}
+   else throw new ShopError('Оберіть оплату або повернення.');return json({ok:true});
+  }
   if(['check','connect'].includes(action)){
    const issues=environmentIssues(env);if(issues.length)throw new ShopError('Заповніть: '+issues.join('; '));const me=await telegram(env,'getMe',{}),info=await telegram(env,'getWebhookInfo',{});
    if(action==='check'){const queued=await first(env.DB,"SELECT COUNT(*) n FROM outbox WHERE state!='done'");return json({username:me.username,webhook_url:info.url,pending:info.pending_update_count||0,outbox_pending:queued.n,note:'Telegram не перевіряє фактичну оплату або доставку. Останню помилку підключення дивіться в BotFather/логах без публікації токена.'});}
    if(shop.store.mode==='live'&&shop.liveIssues().length)throw new ShopError('Завершіть налаштування live: '+shop.liveIssues().join('; '));
    const endpoint=url.origin+'/telegram/webhook';if(info.url&&info.url!==endpoint&&body.replace!==true)return json({error:'У бота вже є інше webhook-підключення. Якщо потрібно замінити, поставте відповідну позначку.'},409);
    await telegram(env,'setWebhook',{url:endpoint,secret_token:await webhookSecret(env),max_connections:1,allowed_updates:['message','callback_query'],drop_pending_updates:false});
-   await telegram(env,'setMyCommands',{commands:[['start','Вітання та меню'],['catalog','Каталог FORMULOVE'],['all','Усі моделі з фото'],['cart','Мій кошик'],['orders','Мої замовлення'],['help','Допомога'],['cancel','Скасувати оформлення'],['id','Мій Telegram ID']].map(([command,description])=>({command,description}))});
+   await telegram(env,'setMyCommands',{commands:[['start','Вітання та меню'],['catalog','Каталог FORMULOVE'],['all','Усі моделі з фото'],['cart','Мій кошик'],['orders','Мої замовлення'],['profile','Мій профіль'],['unsubscribe','Вимкнути новини'],['help','Допомога'],['cancel','Скасувати оформлення'],['id','Мій Telegram ID']].map(([command,description])=>({command,description}))});
    await run(env.DB,"INSERT INTO settings VALUES('bot_username',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[me.username]);
    return json({ok:true,username:me.username,note:shop.store.mode==='demo'?'Працює demo. Нічого не сплачуйте. Внесіть свій числовий ID з команди /id у поле власника в панелі.':'Підключення збережено. Виконайте контрольне замовлення.'});
   }
@@ -58,14 +75,25 @@ export async function handleWebhook(request,env){
 export default {
  async fetch(request,env){
   const url=new URL(request.url);
+  if(url.pathname==='/reports/export'){
+   if(request.method!=='POST')return json({error:'Method not allowed'},405);
+   if(!env.REPORT_KEY||env.REPORT_KEY.length<32||!equalSecret(request.headers.get('Authorization'),'Bearer '+env.REPORT_KEY))return json({error:'Forbidden'},403);
+   try{const raw=await request.text();if(raw.length>4096)return json({error:'Request too large'},413);const data=JSON.parse(raw),shop=await new Shop(env).load();return new Response(await accountingCSV(shop,data.type,data),{headers:{...security,'Content-Type':'text/csv; charset=utf-8'}});}catch{return json({error:'Cannot export this report'},400);}
+  }
+  if(url.pathname.startsWith('/payments/mono/')){
+   if(request.method!=='POST')return json({error:'Method not allowed'},405);
+   if(!onlineReady(env)||!env.SETUP_KEY||!equalSecret(url.pathname,'/payments/mono/'+await monoHook(env)))return json({error:'Forbidden'},403);
+   try{const raw=await request.text();if(raw.length>16384)return json({error:'Request too large'},413);const body=JSON.parse(raw);if(!/^[-\w]{1,80}$/.test(body.invoiceId||''))return json({error:'Invalid invoice'},400);const shop=await new Shop(env).load(),row=await first(env.DB,'SELECT order_id FROM payment_invoices WHERE invoice_id=?',[body.invoiceId]);if(row)await syncInvoice(shop,row.order_id);return json({ok:true});}catch{return json({error:'Payment status needs retry'},503);}
+  }
+  if(url.pathname==='/payment-return')return new Response('<!doctype html><html lang="uk"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FORMULOVE — оплата</title><body style="font:18px/1.6 system-ui;max-width:600px;margin:60px auto;padding:24px"><h1>FORMULOVE</h1><p>Поверніться в бот → Мої замовлення → Перевірити оплату.</p><p>Статус оновлюється після відповіді банку.</p></body></html>',{headers:{...security,'Content-Type':'text/html; charset=utf-8'}});
   if(url.pathname==='/setup'&&request.method==='GET')return new Response(SETUP_HTML,{headers:{...security,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'"}});
   if(url.pathname.startsWith('/setup/'))return setup(request,env,url);
   if(url.pathname==='/telegram/webhook')return handleWebhook(request,env);
   if(url.pathname==='/health')return json({service:'FORMULOVE',status:'running'});
-  if(url.pathname==='/'&&request.method==='GET')return new Response('<!doctype html><html lang="uk"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FORMULOVE</title><body style="font:17px/1.6 system-ui;background:#f7f4ee;color:#222;max-width:620px;margin:70px auto;padding:25px"><h1 style="letter-spacing:5px">FORMULOVE</h1><p>Любов до швидкості. Одяг на щодень.</p><p>Це технічна адреса Telegram-бота. Для покупки відкрийте посилання на бота зі сторінки FORMULOVE.</p><a href="/setup" style="color:#a8202a">Панель власника</a></body></html>',{headers:{...security,'Content-Type':'text/html; charset=utf-8'}});
+  if(url.pathname==='/'&&request.method==='GET')return new Response('<!doctype html><html lang="uk"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FORMULOVE</title><body style="font:17px/1.6 system-ui;background:#f7f4ee;color:#222;max-width:620px;margin:70px auto;padding:25px"><h1 style="letter-spacing:5px">FORMULOVE</h1><p>Одяг з вишивкою для фанатів Формули 1.</p><p>Це технічна адреса Telegram-бота. Для покупки відкрийте посилання на бота зі сторінки FORMULOVE.</p><a href="/setup" style="color:#a8202a">Панель власника</a></body></html>',{headers:{...security,'Content-Type':'text/html; charset=utf-8'}});
   return json({error:'Not found'},404);
  },
  async scheduled(controller,env,ctx){
-  ctx.waitUntil((async()=>{if(!env.DB)return;try{const shop=await new Shop(env).load();await drain(shop,8);await env.DB.batch([stmt(env.DB,"DELETE FROM updates WHERE state='done' AND created_at<?",[epoch()-7*86400]),stmt(env.DB,'DELETE FROM mutations WHERE created_at<?',[epoch()-7*86400])]);}catch{console.log('FORMULOVE scheduled delivery needs retry');}})());
+  ctx.waitUntil((async()=>{if(!env.DB)return;try{const shop=await new Shop(env).load();await pollPayments(shop,1);await drain(shop,2);await drainCampaigns(shop,8);await env.DB.batch([stmt(env.DB,"DELETE FROM updates WHERE state='done' AND created_at<?",[epoch()-7*86400]),stmt(env.DB,'DELETE FROM mutations WHERE created_at<?',[epoch()-7*86400])]);}catch{console.log('FORMULOVE scheduled delivery needs retry');}})());
  }
 };
